@@ -45,6 +45,7 @@ def scrape_faqs():
     markdown_content = "# The 5ers FAQ\n\n"
     
     for idx, link in enumerate(urls):
+        link = link.replace('/frequently_questions/', '/faqs/')
         print(f"Scraping ({idx+1}/{len(urls)}): {link}")
         try:
             res = requests.get(link, headers=headers)
