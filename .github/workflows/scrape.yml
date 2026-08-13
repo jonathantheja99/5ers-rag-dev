@@ -34,8 +34,8 @@ jobs:
 
       - name: Commit and Push Changes
         run: |
-          git config --global user.name 'github-actions[bot]'
-          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git config --global user.name 'jonathantheja99'
+          git config --global user.email 'jonathantheja99@users.noreply.github.com'
           git add data/
           # Check if there are any changes
           if git diff --staged --quiet; then
