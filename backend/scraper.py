@@ -1,64 +1,79 @@
 import os
 import requests
+import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
-import re
+import markdownify
 
-START_URL = "https://the5ers.com/faqs/"
+SITEMAP_URL = "https://wp.the5ers.com/frequently_questions-sitemap.xml"
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", r"C:\Users\USER\Documents\Obsidian Vault\5ers RAG")
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, "faq_data.md")
-BASE_URL = "https://the5ers.com"
+
+def get_faq_urls():
+    print(f"Fetching sitemap from {SITEMAP_URL}...")
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    response = requests.get(SITEMAP_URL, headers=headers)
+    if response.status_code != 200:
+        print(f"Failed to fetch sitemap. Status: {response.status_code}")
+        return []
+
+    root = ET.fromstring(response.text)
+    namespaces = {'sitemap': 'http://www.sitemaps.org/schemas/sitemap/0.9'}
+    
+    urls = []
+    # The sitemap XML has <url><loc>...</loc></url>
+    for loc in root.findall('.//sitemap:loc', namespaces):
+        url = loc.text
+        # Filter for only English FAQs (skip /ar/, /es/, /fr/, etc)
+        if '/frequently_questions/' in url and not any(lang in url for lang in ['/ar/', '/es/', '/fr/', '/ja/', '/jp/', '/pt/', '/ru/', '/zh-hans/', '/zh-hant/', '/ko/', '/hi/', '/id/', '/vi/', '/th/', '/ms/']):
+            urls.append(url)
+            
+    print(f"Found {len(urls)} English FAQ articles.")
+    return urls
 
 def scrape_faqs():
-    print(f"Scraping {START_URL}...")
+    urls = get_faq_urls()
+    if not urls:
+        print("No URLs found to scrape.")
+        return
+
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
     
-    response = requests.get(START_URL, headers=headers)
-    if response.status_code != 200:
-        print(f"Failed to fetch FAQ page. Status: {response.status_code}")
-        return
-
-    soup = BeautifulSoup(response.text, 'html.parser')
-    
-    # Find all FAQ links
-    faq_links = set()
-    for a in soup.find_all('a', href=True):
-        href = a['href']
-        if '/faqs/' in href and href != '/faqs/':
-            if href.startswith('/'):
-                href = BASE_URL + href
-            faq_links.add(href)
-            
-    print(f"Found {len(faq_links)} FAQ articles. Extracting content...")
-    
     markdown_content = "# The 5ers FAQ\n\n"
     
-    for idx, link in enumerate(faq_links):
-        print(f"Scraping ({idx+1}/{len(faq_links)}): {link}")
+    for idx, link in enumerate(urls):
+        print(f"Scraping ({idx+1}/{len(urls)}): {link}")
         try:
             res = requests.get(link, headers=headers)
             if res.status_code == 200:
                 page_soup = BeautifulSoup(res.text, 'html.parser')
                 
-                # Usually titles are in h1
-                h1 = page_soup.find('h1')
-                title = h1.text.strip() if h1 else link.split('/')[-2].replace('-', ' ').title()
-                
-                markdown_content += f"## {title}\n\n"
-                
-                # The main content is often in a specific div. We'll extract paragraphs from the main section.
-                # Since we don't know the exact div class, we look for typical content containers or just extract all paragraphs.
-                # A heuristic: find the div with the most p tags.
-                divs = page_soup.find_all('div')
-                best_div = max(divs, key=lambda d: len(d.find_all('p')), default=page_soup)
-                
-                paragraphs = best_div.find_all(['p', 'li'])
-                for p in paragraphs:
-                    text = p.get_text(strip=True)
-                    if text and len(text) > 20: # filter out very short nav links
-                        markdown_content += f"{text}\n\n"
+                # The main content is usually inside an <article> tag.
+                article = page_soup.find('article')
+                if not article:
+                    # Fallback to main content div
+                    article = page_soup.find('main') or page_soup.find('body')
+                    
+                if article:
+                    # Remove "Was this article helpful?" section
+                    helpful_blocks = article.find_all(string=lambda text: text and 'Was this article helpful?' in text)
+                    for block in helpful_blocks:
+                        if block.parent and block.parent.parent:
+                            block.parent.parent.decompose()
+                            
+                    # Convert HTML directly to Markdown, preserving lists, bold text, tables, headers, etc.
+                    md_text = markdownify.markdownify(str(article), heading_style="ATX")
+                    
+                    # Usually titles are in h1, if the article missed it, let's add the title manually
+                    if not page_soup.find('h1'):
+                        title = link.strip('/').split('/')[-1].replace('-', ' ').title()
+                        markdown_content += f"\n\n## {title}\n\n"
                         
+                    markdown_content += md_text.strip() + "\n\n---\n\n"
+                
         except Exception as e:
             print(f"Error scraping {link}: {e}")
             
@@ -68,7 +83,7 @@ def scrape_faqs():
     with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
         f.write(markdown_content)
         
-    print(f"Successfully saved {len(faq_links)} FAQs to {OUTPUT_FILE}")
+    print(f"Successfully saved {len(urls)} FAQs to {OUTPUT_FILE}")
 
 if __name__ == "__main__":
     scrape_faqs()
