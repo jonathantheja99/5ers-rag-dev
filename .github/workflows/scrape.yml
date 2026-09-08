@@ -1,46 +1,77 @@
-name: Scrape The 5ers FAQ
+name: Refresh The5ers Knowledge Base
 
 on:
   schedule:
-    - cron: '0 0 * * 0' # Run weekly on Sunday at midnight
-  workflow_dispatch: # Allow manual triggering
+    - cron: '0 0 * * 0' # Weekly, Sunday 00:00 UTC
+  workflow_dispatch:
+
+# Without this the default GITHUB_TOKEN is read-only and the push fails with
+# exit code 128, which is what killed every earlier run of this workflow.
+permissions:
+  contents: write
 
 jobs:
-  scrape-and-commit:
+  refresh-knowledge-base:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
+          python-version: '3.12'
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install beautifulsoup4 requests markdownify
+          pip install requests beautifulsoup4 markdownify python-dotenv
 
-      - name: Run scraper
-        run: |
-          # Create data directory if it doesn't exist
-          mkdir -p data
-          # We need to run the scraper, but we need to ensure the scraper writes to the correct path in GH actions
-          python backend/scraper.py
-        env:
-          # In the action, we override the OUTPUT_DIR via env or just modify the script
-          OUTPUT_DIR: 'data' 
+      # Pulls all English FAQs from the WordPress REST API and replaces the
+      # archive. It never writes faq_data.md directly.
+      - name: Scrape FAQ archive
+        run: python backend/scraper.py --promote
 
-      - name: Commit and Push Changes
+      # Rebuilds faq_data.md with the verified rules of the5ers_master_kb.md
+      # first. compiler.py aborts if the master KB is missing.
+      - name: Compile knowledge base
+        run: python backend/compiler.py
+
+      # Belt and braces: refuse to commit a knowledge base that lost its policy
+      # section or came back suspiciously small.
+      - name: Verify compiled output
         run: |
-          git config --global user.name 'jonathantheja99'
-          git config --global user.email 'jonathantheja99@users.noreply.github.com'
-          git add data/
-          # Check if there are any changes
+          python - <<'PY'
+          import sys
+          from pathlib import Path
+
+          kb = Path("knowledge_base/faq_data.md")
+          master = Path("knowledge_base/the5ers_master_kb.md")
+          text = kb.read_text(encoding="utf-8")
+
+          problems = []
+          if not text.startswith("# The5ers Master Knowledge Base"):
+              problems.append("faq_data.md does not start with the master KB")
+          if master.read_text(encoding="utf-8").strip() not in text:
+              problems.append("master KB content is not fully present")
+          if "# The5ers Official FAQ Archive (Reference Material)" not in text:
+              problems.append("archive marker missing")
+          if len(text) < 150_000:
+              problems.append(f"suspiciously small: {len(text):,} chars")
+
+          for p in problems:
+              print(f"::error::{p}")
+          sys.exit(1 if problems else 0)
+          PY
+
+      - name: Commit and push changes
+        run: |
+          git config user.name 'jonathantheja99'
+          git config user.email 'jonathantheja99@users.noreply.github.com'
+          git add knowledge_base/
           if git diff --staged --quiet; then
-            echo "No changes to commit."
+            echo "Knowledge base already up to date."
           else
-            git commit -m "chore: auto-update FAQ data [skip ci]"
+            git commit -m "chore: refresh FAQ knowledge base [skip ci]"
             git push
           fi

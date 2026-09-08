@@ -1,5 +1,19 @@
+# Secrets
 .env
 venv/
-node_modules/
+
+# Python
 __pycache__/
+*.py[cod]
+
+# Generated vector store (rebuilt from knowledge_base/faq_data.md)
+chroma_db/
+backend/chroma_db/
+
+# Raw scraper output, promoted by hand via `scraper.py --promote`
+knowledge_base/scraped/
 raw_data/
+
+# Node / Vite
+node_modules/
+dist/

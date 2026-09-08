@@ -1,11 +1,14 @@
 fastapi
 uvicorn
 langchain
+langchain-core
 langchain-google-genai
+langchain-chroma
+langchain-text-splitters
 chromadb
 beautifulsoup4
 requests
-duckduckgo-search
+ddgs
 pydantic
 python-dotenv
 lxml

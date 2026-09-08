@@ -1,5 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
 
+// Set VITE_API_BASE_URL in frontend/.env to point at a non-local backend. The
+// backend also has to allow this app's origin via ALLOWED_ORIGINS.
+const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
+
 function App() {
   const [messages, setMessages] = useState([
     { role: 'bot', content: 'Hello! I am the 5ers Support Agent. How can I help you today?' }
@@ -26,7 +30,7 @@ function App() {
     setIsLoading(true);
 
     try {
-      const response = await fetch('http://localhost:8000/chat', {
+      const response = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
