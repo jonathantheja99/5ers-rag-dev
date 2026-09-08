@@ -1,8 +1,9 @@
 # The5ers Master Knowledge Base & Operational Reference (Chat Primary Knowledge)
 
-> **Location:** `C:\Users\USER\.gemini\antigravity\scratch\the5ers_master_kb.md`  
-> **Synced With:** `C:\Users\USER\Documents\Obsidian Vault\5ers RAG\faq_data.md`  
-> **Status:** Verified Active Knowledge Base for Support Chat Inquiries.
+> **Source of truth:** `knowledge_base/the5ers_master_kb.md` (hand-maintained).  
+> **Compiled into:** `knowledge_base/faq_data.md` via `python backend/compiler.py`, always ahead of the FAQ archive.  
+> **Status:** Verified active knowledge base for support chat inquiries. Where the
+> official FAQ archive disagrees with this document, **this document wins**.
 
 ---
 

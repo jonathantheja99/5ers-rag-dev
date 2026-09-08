@@ -12,7 +12,14 @@ Usage:
 import argparse
 import sys
 
-from agent import MASTER_K, RETRIEVAL_K, TIER_ARCHIVE, TIER_MASTER, RAGAgent
+from agent import (
+    MASTER_K,
+    RELEVANCE_THRESHOLD,
+    RETRIEVAL_K,
+    TIER_ARCHIVE,
+    TIER_MASTER,
+    RAGAgent,
+)
 
 # (question, must mention any of, must NOT claim)
 ANSWER_CASES = [
@@ -61,13 +68,16 @@ def check_retrieval(agent) -> int:
     for question, expected in RETRIEVAL_CASES:
         master = agent._search(question, TIER_MASTER, MASTER_K)
         archive = agent._search(question, TIER_ARCHIVE, RETRIEVAL_K)
-        context = agent._retrieve(question)
+        context, relevance = agent._retrieve(question)
         missing = [term for term in expected if term not in context]
-        ok = bool(master) and not missing
+        # Below the threshold the agent would abandon this context for web search.
+        routed_to_kb = relevance >= RELEVANCE_THRESHOLD
+        ok = bool(master) and not missing and routed_to_kb
         print(
             f"  [{'PASS' if ok else 'FAIL'}] {question}\n"
             f"         master={len(master)} archive={len(archive)} "
-            f"chars={len(context)}"
+            f"chars={len(context)} relevance={relevance:.3f}"
+            + ("" if routed_to_kb else " BELOW THRESHOLD")
             + (f" missing={missing}" if missing else "")
         )
         failures += 0 if ok else 1

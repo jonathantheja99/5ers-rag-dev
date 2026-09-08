@@ -64,6 +64,13 @@ RETRIEVAL_K = int(os.getenv("RETRIEVAL_K", "5"))
 MASTER_K = int(os.getenv("MASTER_K", "3"))
 TIER_MASTER = "master"
 TIER_ARCHIVE = "archive"
+
+# Routing gate: answer from the knowledge base at or above this relevance, else
+# fall back to web search. Measured against this KB, in-domain questions score
+# 0.59-0.66 and out-of-domain ones 0.31-0.46, so 0.50 sits in the gap. This
+# replaced an LLM yes/no gate that discarded good context on some runs and cost
+# a second generate request on every question.
+RELEVANCE_THRESHOLD = float(os.getenv("RELEVANCE_THRESHOLD", "0.5"))
 # Must match the archive heading written by compiler.py.
 ARCHIVE_MARKER = "# The5ers Official FAQ Archive (Reference Material)"
 
@@ -388,23 +395,33 @@ class RAGAgent:
         return CONTEXT_SEPARATOR.join(formatted)
 
     def _search(self, query: str, tier, k: int) -> list:
+        """Return [(document, relevance_score)] for one tier."""
         if not self.vectorstore or k <= 0:
             return []
         kwargs = {"filter": {"tier": tier}} if tier else {}
         try:
-            return self.vectorstore.similarity_search(query, k=k, **kwargs)
+            return self.vectorstore.similarity_search_with_relevance_scores(
+                query, k=k, **kwargs
+            )
         except Exception as e:
             print(f"Retrieval failed (tier={tier}): {e}")
             return []
 
-    def _retrieve(self, query: str) -> str:
-        """Lead the context with verified policy, then add archive detail."""
-        docs = self._search(query, TIER_MASTER, MASTER_K) + self._search(
+    def _retrieve(self, query: str):
+        """Lead the context with verified policy, then add archive detail.
+
+        Returns (context, best_relevance) so the caller can decide between a
+        grounded answer and the web fallback without a second model call.
+        """
+        scored = self._search(query, TIER_MASTER, MASTER_K) + self._search(
             query, TIER_ARCHIVE, RETRIEVAL_K
         )
-        if not docs:  # index predates tier metadata, or the filter matched nothing
-            docs = self._search(query, None, MASTER_K + RETRIEVAL_K)
-        return CONTEXT_SEPARATOR.join(doc.page_content for doc in docs)
+        if not scored:  # index predates tier metadata, or the filter matched nothing
+            scored = self._search(query, None, MASTER_K + RETRIEVAL_K)
+        if not scored:
+            return "", 0.0
+        context = CONTEXT_SEPARATOR.join(doc.page_content for doc, _ in scored)
+        return context, max(score for _, score in scored)
 
     # ----------------------------------------------------------------- answer
 
@@ -415,9 +432,9 @@ class RAGAgent:
                 "Please provide a Google Gemini API Key in the backend/.env file."
             )
 
-        context = self._retrieve(query)
+        context, relevance = self._retrieve(query)
 
-        if context and self._context_answers(context, query):
+        if context and relevance >= RELEVANCE_THRESHOLD:
             prompt = f"""\
 You are a support agent for The 5ers proprietary trading firm. A trader has asked one
 question and wants the answer, plainly and briefly.
@@ -438,7 +455,8 @@ Question: {query}
 Answer:"""
             return _plain_text(_as_text(self.llm.invoke(prompt)))
 
-        # Fallback: nothing usable in the knowledge base, try the open web.
+        # Fallback: nothing relevant in the knowledge base, try the open web.
+        print(f"Relevance {relevance:.3f} below {RELEVANCE_THRESHOLD}; falling back.")
         web_context = self.web_search(f"The 5ers {query}")
         if not web_context or web_context.startswith("Web search failed"):
             return NO_ANSWER_MESSAGE
@@ -462,31 +480,3 @@ Question: {query}
 
 Answer:"""
         return _plain_text(_as_text(self.llm.invoke(fallback_prompt)))
-
-    def _context_answers(self, context: str, query: str) -> bool:
-        """Gate that decides whether to answer from the KB or fall back to the web.
-
-        Phrased as a relevance test rather than a completeness test: asking whether
-        the context *fully* answers the question made the model bail out to web
-        search on core policy questions the knowledge base covers perfectly well.
-        """
-        eval_prompt = f"""\
-You are a routing evaluator for a support bot. Decide whether the context below is relevant
-to the question and can support an answer.
-
-Answer NO only if the context is about a clearly different topic, or contains nothing that
-bears on the question. If the context is on-topic and covers the question even partially,
-answer YES.
-
-Context:
-{context}
-
-Question: {query}
-
-Reply with exactly one word: YES or NO."""
-        try:
-            verdict = _as_text(self.llm.invoke(eval_prompt)).strip().upper()
-        except Exception as e:
-            print(f"Evaluator call failed, answering from context anyway: {e}")
-            return True
-        return verdict.startswith("YES")
